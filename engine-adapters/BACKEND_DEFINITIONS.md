@@ -53,12 +53,13 @@ backend), MiniCPM5-2B bf16 container, through `radiance-lemonade` and `backends.
 
 | Definition | Engine, model | Where | L1 lifecycle | L2 eviction | L3 device | L4 telemetry | Earned |
 |---|---|---|---|---|---|---|---|
+| `radiance` | radiance 2.2.0 + `cesarops/rdna2-libr3d` (gfx1031 build), MiniCPM5-2B bf16 | RX 6700 XT, lemond built on that host (Arch) | pass, 20.8 s, 12 GB on GPU 0 held and freed | pass | pass: `--device 0`, memory on GPU 0 only | pass, 109 metric families | **L4** |
 | `radiance` | radiance 2.2.0 host build (5e0cd1e), MiniCPM5-2B bf16 | CPU, 8 cores of a Xeon Gold 6226 | pass, 98 s (about 1 tok/s), 4.4 GB held and freed | pass | not tested: no AMD card on this host | pass, 109 metric families | **L2** (L4 check passes) |
 
 - Outside lemond, the same container on an RX 6700 XT (gfx1031) with libr3d built for RDNA2 (radiance branch
   `cesarops/rdna2-libr3d`: the 16x16x16 wave-matrix ops on ds_bpermute + v_dot2/v_dot4) decoded at 9.3 tok/s, first
   token 0.22 s; greedy output equal to the CPU build for 27 of 32 tokens, parting at a near-tie (logprob -1.612 against
-  -1.597). L3 waits for a lemond from #3906 on the node with that card.
+  -1.597).
 - `--spec-tokens 0`: this radiance build refuses block-FP8 drafters, which this container carries.
 - MiniCPM5-2B IQ8R does not load on either the host build or libr3d: its `rmsnorm_had_quant_i8g` op is only in the
   RDNA4 and Strix Halo libraries.

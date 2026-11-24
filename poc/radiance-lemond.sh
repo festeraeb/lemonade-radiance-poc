@@ -7,7 +7,7 @@
 #     PORT                lemond port, default 13391
 #     ROOT                cache/config folder, default ./poc-root
 #
-# Before: build lemond and lemonade (cmake --preset default && cmake --build --preset default
+# Before: build lemond and lemonade (cmake --preset default -DBUILD_TESTING=OFF && cmake --build --preset default
 # --target lemond lemonade) and the launcher (cargo build --release --manifest-path
 # engine-adapters/Cargo.toml --bin radiance-lemonade). Registers the model twice (rad-a, rad-b)
 # for the eviction check. Stop lemond with: kill "$(cat ROOT/lemond.pid)"

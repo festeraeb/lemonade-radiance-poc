@@ -16,11 +16,12 @@ through a JSON backend definition, with no new C++ in lemond.
 
 ## Results (2026-11-24)
 
-Through lemond, `tools/backend_conformance.py`, radiance CPU host build, MiniCPM5-2B bf16:
+Through lemond, `tools/backend_conformance.py`, MiniCPM5-2B bf16:
 
-| L1 lifecycle | L2 eviction | L3 device | L4 telemetry | Earned |
-|---|---|---|---|---|
-| pass (4.4 GB held, freed on unload) | pass | not tested (no AMD card on that host) | pass, 109 metric families | L2 |
+| Where | L1 lifecycle | L2 eviction | L3 device | L4 telemetry | Earned |
+|---|---|---|---|---|---|
+| RX 6700 XT (gfx1031), lemond built on that host (Arch) | pass, 20.8 s, 12 GB on GPU 0 freed on unload | pass | pass: `--device 0`, memory on GPU 0 only | pass, 109 metric families | **L4** |
+| CPU host build, 8 cores (Ubuntu) | pass, 4.4 GB freed on unload | pass | not tested (no AMD card) | pass | L2 |
 
 Same container, radiance alone, greedy, 32 tokens:
 
@@ -34,7 +35,7 @@ Same container, radiance alone, greedy, 32 tokens:
 ## Run it
 
 ```bash
-cmake --preset default && cmake --build --preset default --target lemond lemonade
+cmake --preset default -DBUILD_TESTING=OFF && cmake --build --preset default --target lemond lemonade
 cargo build --release --manifest-path engine-adapters/Cargo.toml --bin radiance-lemonade
 bash radiance/build.sh gfx1031 ./radiance-src          # or "none" for the CPU build
 curl -LO https://huggingface.co/StillDeadcode/minicpm5-2b-bf16/resolve/main/minicpm5-2b-bf16.rad
@@ -52,7 +53,7 @@ bash poc/radiance-lemond.sh minicpm5-2b-bf16.rad ./radiance-src/build
 
 ## Limits
 
-- L3 not graded yet: needs this lemond on the node with the AMD card.
+- Graded on one AMD card (RX 6700 XT); other gfx103x and gfx11/gfx12 cards untested here.
 - The RDNA2 replacement for the 16x16x16 wave-matrix ops is correct, not fast. The test host's small PCI BAR also
   likely caps the launch rate.
 - MiniCPM5-2B IQ8R does not load: its `rmsnorm_had_quant_i8g` op exists only in the RDNA4 and Strix Halo libraries.

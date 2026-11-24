@@ -13,6 +13,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SPEC_VERSION = 1  # kSpecVersion
 PLACEHOLDERS = {"port", "model", "model_path", "device", "gpu_uuids", "ctx", "spec_dir"}
+# Understood by tools/to_backend_definition.py (lemonade#3906 definitions) but not by the adapter
+# plane, which refuses a spec that uses them: reported as a warning, not a failure.
+DEFINITION_ONLY = {"model_name"}
 ENV_PREFIXES = ("CUDA_", "HIP_", "ROCR_", "HSA_", "GGML_", "LLAMA_", "OMP_", "MKL_", "VK_",
                 "NAUTIBURN_", "STRATA_", "LB_", "LEMONADE_ENGINE_")
 ENV_NAMES = {"LD_LIBRARY_PATH", "TZ"}
@@ -34,6 +37,8 @@ def is_int(v):
 
 def check_text(label, text, problems, shell=False):
     for name in TOKEN.findall(text):
+        if name in DEFINITION_ONLY:
+            continue
         if name not in PLACEHOLDERS:
             problems.append(f"{label}: unknown placeholder {{{name}}}")
     if shell:
@@ -63,6 +68,11 @@ def check(spec):
     elif not is_int(spec["spec_version"]) or not 1 <= spec["spec_version"] <= SPEC_VERSION:
         p.append(f"spec_version must be an integer in 1..{SPEC_VERSION}")
     a = spec.get("args")
+    if isinstance(a, list):
+        used = {n for x in a if isinstance(x, str) for n in TOKEN.findall(x)} & DEFINITION_ONLY
+        if used:
+            w.append("definition only: " + ", ".join("{" + n + "}" for n in sorted(used))
+                     + " (to_backend_definition.py maps it; the adapter plane refuses this spec)")
     if "args" in spec:
         if not isinstance(a, list) or not a:
             p.append("args must be a non-empty array")

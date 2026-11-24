@@ -50,7 +50,8 @@
     ],
     "bin_variants": [
       "cuda"
-    ]
+    ],
+    "uses_ctx_size": true
   },
   "install": {
     "strategy": "external_only"

@@ -1,0 +1,30 @@
+{
+  "recipe": "radiance",
+  "stem": "radiance",
+  "class_prefix": "Radiance",
+  "display_name": "radiance (AMD HIP inference server)",
+  "binary": "radiance-lemonade",
+  "spec_version": 1,
+  "targets": ["adapter_plane"],
+  "args": ["--model", "{model}", "--name", "{model_name}", "--host", "127.0.0.1", "--port", "{port}", "--ctx", "{ctx}", "--spec-tokens", "0", "--device", "{device}"],
+  "default_device": "gpu",
+  "support": [
+    {"os": ["linux"], "devices": {"amd_gpu": ["gfx1030", "gfx1031", "gfx1100", "gfx1101", "gfx1102", "gfx1151", "gfx1200", "gfx1201"]},
+     "note": "AMD GPU, ROCm 7.2 or 10.1 runtime; gfx103x only with the cesarops/rdna2-libr3d kernel build"},
+    {"os": ["linux"], "devices": {"cpu": ["x86_64"]},
+     "note": "radiance's host backend (AVX2 / AVX-512); about 1 tok/s on a 2B bf16 model, a fallback"}
+  ],
+  "modes": ["chat"],
+  "checkpoint": {"kind": "file"},
+  "ready": {"path": "/health", "timeout_s": 900, "json_field": "status", "ready_values": ["ok"]},
+  "identity": {"owned_by": "radiance"},
+  "completion": true,
+  "prometheus_metrics": true,
+  "notes": [
+    "radiance (codeberg.org/StillDeadcode/radiance, Apache-2.0) serves a .rad container and reads its settings only from a YAML file. The binary is radiance-lemonade (this repo, src/bin/radiance-lemonade.rs): it takes these flags, writes the file and execs radiance, so lemond stops the server itself by PID.",
+    "{model_name} is Lemonade's model id: radiance answers 404 to a request naming any other model, so the server is configured under that name. This placeholder exists only for backend definitions (lemonade#3906), not for the adapter plane.",
+    "{device} is a HIP device list (HIP_VISIBLE_DEVICES); empty means every card.",
+    "--spec-tokens 0: this radiance build refuses block-FP8 drafters, which several containers carry (MiniCPM5-2B bf16). A container with an int8 drafter can drop it to use speculative decoding.",
+    "Measured 2026-11-24: MiniCPM5-2B bf16 on an RX 6700 XT (gfx1031, RDNA2 port of libr3d) 9.3 tok/s decode, 0.22 s first token; on 8 Xeon Gold 6226 cores (host backend) 0.8 tok/s."
+  ]
+}

@@ -37,7 +37,8 @@
     ],
     "bin_variants": [
       "cpu"
-    ]
+    ],
+    "uses_ctx_size": true
   },
   "install": {
     "strategy": "external_only"

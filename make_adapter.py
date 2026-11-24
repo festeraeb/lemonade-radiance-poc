@@ -55,6 +55,9 @@ PLACEHOLDERS = {"model", "port", "device"}
 # says "targets": ["adapter_plane"] and is turned into a backends.d definition (tools/to_backend_definition.py),
 # never into generated C++, which can only fill the three above.
 PLANE_PLACEHOLDERS = PLACEHOLDERS | {"model_path", "gpu_uuids", "ctx", "spec_dir"}
+# {model_name} (Lemonade's model id) is filled only by to_backend_definition.py, for engines that refuse a
+# request naming another model; a "targets": ["adapter_plane"] spec may use it.
+DEFINITION_PLACEHOLDERS = PLANE_PLACEHOLDERS | {"model_name"}
 TARGETS = {"generated", "adapter_plane"}
 
 
@@ -105,11 +108,11 @@ def validate(spec: dict) -> dict:
     targets = spec.get("targets")
     if targets is not None and (not isinstance(targets, list) or not targets or not set(targets) <= TARGETS):
         raise SpecError(f"targets must be a non-empty list from {sorted(TARGETS)}")
-    allowed = PLANE_PLACEHOLDERS if plane_only(spec) else PLACEHOLDERS
+    allowed = DEFINITION_PLACEHOLDERS if plane_only(spec) else PLACEHOLDERS
     texts = [tmpl] + list((spec.get("env") or {}).values())
     unknown = {p for t in texts for p in re.findall(r"\{([a-z_]+)\}", t)} - allowed
     if unknown:
-        hint = "" if plane_only(spec) else ' (the adapter plane also has ctx, gpu_uuids, model_path, spec_dir: set "targets": ["adapter_plane"])'
+        hint = "" if plane_only(spec) else ' (backends.d definitions also have ctx, gpu_uuids, model_path, model_name, spec_dir: set "targets": ["adapter_plane"])'
         raise SpecError(f"unknown placeholders {sorted(unknown)}; allowed: {sorted(allowed)}{hint}")
     if any(c in tmpl for c in "\"'`$|;&<>"):
         raise SpecError("args_template is split on spaces without a shell: no quotes, $, pipes or redirects")

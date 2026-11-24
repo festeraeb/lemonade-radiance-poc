@@ -57,6 +57,25 @@ class Convert(unittest.TestCase):
         self.assertEqual(d["metadata"]["options"], [])
         self.assertEqual(d["launch"]["backend"], {"fixed": "cpu"})
 
+    def test_model_name_is_passed_and_requests_carry_it(self):
+        # radiance answers 404 to any model id but its own; it is started under Lemonade's model name,
+        # and every forwarded request is rewritten to that name (the client may send the short id).
+        d = tbd.convert(spec("radiance"))
+        self.assertIn({"ref": "/model/name", "type": "string"}, flat(d))
+        for op in d["operations"]:
+            self.assertEqual(op["request"]["set"], {"/model": {"ref": "/model/name", "type": "string"}})
+        plain = tbd.convert(spec("lemonade-burn"))
+        for op in plain["operations"]:
+            self.assertEqual(op["request"]["set"], {})
+
+    def test_ctx_marks_the_backend_as_using_ctx_size(self):
+        # lemond fills /options/ctx_size only for a backend that says so; without it a load fails
+        # with "Missing expression value" (seen on lemond built from #3906, 2026-11-24).
+        d = tbd.convert(spec("radiance"))
+        self.assertIn({"string": {"ref": "/options/ctx_size"}}, flat(d))
+        self.assertIs(d["metadata"].get("uses_ctx_size"), True)
+        self.assertNotIn("uses_ctx_size", tbd.convert(spec("lemonade-burn"))["metadata"])
+
     def test_device_flag_is_its_own_conditional_record(self):
         d = tbd.convert(spec("nautistrata"))
         option = d["metadata"]["options"][0]

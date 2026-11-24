@@ -15,6 +15,22 @@ pub const REQUIRED: [&str; 12] = [
 const DEVICE_FAMILIES: [&str; 5] = ["amd_gpu", "cpu", "metal", "npu", "nvidia_gpu"]; // sorted
 const OSES: [&str; 3] = ["linux", "macos", "windows"]; // sorted
 const PLACEHOLDERS: [&str; 3] = ["device", "model", "port"]; // sorted
+/// A spec with "targets": ["adapter_plane"] becomes only a backends.d definition
+/// (tools/to_backend_definition.py), never generated C++, so it may use the placeholders a
+/// definition fills: the adapter plane's, and {model_name}. Same rule as make_adapter.py.
+const DEFINITION_PLACEHOLDERS: [&str; 8] =
+    ["ctx", "device", "gpu_uuids", "model", "model_name", "model_path", "port", "spec_dir"]; // sorted
+const TARGETS: [&str; 2] = ["adapter_plane", "generated"]; // sorted
+
+/// True when the spec is to be built only as a backends.d definition.
+pub fn plane_only(s: &Map<String, Value>) -> bool {
+    match s.get("targets") {
+        Some(Value::Array(a)) if truthy(&Value::Array(a.clone())) => {
+            a.len() == 1 && a[0].as_str() == Some("adapter_plane")
+        }
+        _ => false,
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpecError(pub String);
@@ -248,17 +264,35 @@ pub fn validate(spec: &Value) -> Result<&Map<String, Value>, SpecError> {
             _ => return err("env values must be strings"),
         }
     }
+    if let Some(t) = s.get("targets") {
+        let ok = match t {
+            Value::Array(a) if !a.is_empty() => {
+                a.iter().all(|x| x.as_str().map_or(false, |v| TARGETS.contains(&v)))
+            }
+            _ => false,
+        };
+        if !ok {
+            return err(format!("targets must be a non-empty list from {}", py_list_repr(&TARGETS)));
+        }
+    }
+    let plane = plane_only(s);
+    let allowed: &[&str] = if plane { &DEFINITION_PLACEHOLDERS } else { &PLACEHOLDERS };
     let unknown: BTreeSet<String> = texts
         .iter()
         .flat_map(|t| placeholders(t))
-        .filter(|p| !PLACEHOLDERS.contains(&p.as_str()))
+        .filter(|p| !allowed.contains(&p.as_str()))
         .collect();
     if !unknown.is_empty() {
         let u: Vec<&str> = unknown.iter().map(|x| x.as_str()).collect();
+        let hint = if plane {
+            ""
+        } else {
+            " (backends.d definitions also have ctx, gpu_uuids, model_path, model_name, spec_dir: set \"targets\": [\"adapter_plane\"])"
+        };
         return err(format!(
-            "unknown placeholders {}; allowed: {}",
+            "unknown placeholders {}; allowed: {}{hint}",
             py_list_repr(&u),
-            py_list_repr(&PLACEHOLDERS)
+            py_list_repr(allowed)
         ));
     }
     if tmpl.chars().any(|c| "\"'`$|;&<>".contains(c)) {
@@ -811,6 +845,12 @@ pub fn normalize_args(spec: &Value) -> Result<Value, SpecError> {
 pub fn render(spec: &Value) -> Result<Vec<(String, String)>, SpecError> {
     let spec = &normalize_args(spec)?;
     let s = validate(spec)?;
+    if plane_only(s) {
+        return err(format!(
+            "{}: an adapter-plane-only spec has no generated C++; use tools/to_backend_definition.py for its backends.d definition",
+            s["recipe"].as_str().unwrap_or("")
+        ));
+    }
     let stem = s["stem"].as_str().unwrap();
     Ok(vec![
         (format!("src/cpp/include/lemon/backends/{stem}/{stem}.h"), descriptor_h(s)),

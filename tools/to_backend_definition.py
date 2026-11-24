@@ -57,6 +57,10 @@ def expression(text, spec):
             parts.append({"string": {"ref": "/options/" + device_option(spec)}})
         elif name == "ctx":
             parts.append({"string": {"ref": "/options/ctx_size"}})
+        elif name == "model_name":
+            # Lemonade's own model id, for engines that refuse a request naming another model
+            # (radiance answers 404). Definitions only: the adapter plane has no such placeholder.
+            parts.append({"ref": "/model/name", "type": "string"})
         else:
             raise SystemExit(
                 f"{spec['recipe']}: placeholder {{{name}}} has no definition reference"
@@ -97,8 +101,15 @@ def argv_records(spec):
     return [{"args": fixed}] + conditional
 
 
+def uses_model_name(spec):
+    return any("{model_name}" in t for t in spec["args"])
+
+
 def operations(spec):
     ops = []
+    # An engine started under Lemonade's model name ({model_name}) is asked for that name: the
+    # client may send the short id ("rad-a") while /model/name is the full one ("user.rad-a").
+    request_set = {"/model": {"ref": "/model/name", "type": "string"}} if uses_model_name(spec) else {}
     kinds = [("chat_completion", "/v1/chat/completions")]
     if spec.get("completion"):
         kinds.append(("completion", "/v1/completions"))
@@ -123,7 +134,7 @@ def operations(spec):
                     "request": {
                         "base": "identity",
                         "remove": [],
-                        "set": {},
+                        "set": dict(request_set),
                         "omit_missing": False,
                     },
                 }
@@ -199,6 +210,13 @@ def convert(spec):
             "supported_modes": spec["modes"],
             "required_checkpoints": ["main"],
             "bin_variants": backends,
+            # {ctx} reads /options/ctx_size, which lemond fills only for a backend that says it
+            # uses one; without this a load fails with "Missing expression value".
+            **(
+                {"uses_ctx_size": True}
+                if any("{ctx}" in t for t in list(spec["args"]) + list((spec.get("env") or {}).values()))
+                else {}
+            ),
             **(
                 {"exposes_prometheus_metrics": True}
                 if spec.get("prometheus_metrics")

@@ -21,6 +21,8 @@ python3 -I tests/test_to_backend_definition.py
 | a flag whose value is `{device}` | its own `argv` record, dropped while the device option is empty |
 | `{device}` in `env` | `launch.environment.set`; the option then defaults to `0`, because a variable cannot be left out |
 | `{device}` anywhere | one option `<recipe>_device` with `type_name: DEVICES` |
+| `{ctx}` | `/options/ctx_size`, and `metadata.uses_ctx_size: true` (lemond fills that option only then; without it a load fails with "Missing expression value") |
+| `{model_name}` (definitions only, `"targets": ["adapter_plane"]`) | `/model/name` in argv, and every operation's `request.set` writes `/model` to it: for an engine that answers 404 to a model id it was not started under (radiance); the client may send the short id (`rad-a`) where `/model/name` is the full one (`user.rad-a`) |
 | `ready.path`, `ready.timeout_s` | `launch.readiness`, `launch.watchdog` |
 | `library_dir: binary` | `environment.preset: executable_loader_path` |
 | `prometheus_metrics: true` | `metadata.exposes_prometheus_metrics` |
@@ -41,6 +43,25 @@ The engine's path comes from the server's config: `<config_section>.<backend>_bi
 | `binary_sha256` | pin the executable |
 | `telemetry_path`, `memory_path`, `budget_path` | per-device memory report and the shrink request; only Prometheus `/metrics` is forwarded today |
 | `checkpoint.kind: dir` with a marker file | check the model folder before launch |
+| an engine that reads its settings only from a file (radiance: `--config FILE`, no other flags) | a definition passes argv and environment but cannot write a file. Worked around with a launcher (`src/bin/radiance-lemonade.rs`) that takes flags, writes the YAML and `exec`s the engine, so lemond still owns the server's PID. A `launch.files` record (a rendered template written before start) would remove the launcher |
+
+## Measured, 2026-11-24: radiance
+
+[radiance](https://codeberg.org/StillDeadcode/radiance) (Apache-2.0, C++/HIP, AMD cards and an AVX2/AVX-512 host
+backend), MiniCPM5-2B bf16 container, through `radiance-lemonade` and `backends.d/radiance.json`. lemond from
+`cesarops/conformance-on-3906` (throwaway root, port 13391, stopped), graded by `tools/backend_conformance.py`.
+
+| Definition | Engine, model | Where | L1 lifecycle | L2 eviction | L3 device | L4 telemetry | Earned |
+|---|---|---|---|---|---|---|---|
+| `radiance` | radiance 2.2.0 host build (5e0cd1e), MiniCPM5-2B bf16 | CPU, 8 cores of a Xeon Gold 6226 | pass, 98 s (about 1 tok/s), 4.4 GB held and freed | pass | not tested: no AMD card on this host | pass, 109 metric families | **L2** (L4 check passes) |
+
+- Outside lemond, the same container on an RX 6700 XT (gfx1031) with libr3d built for RDNA2 (radiance branch
+  `cesarops/rdna2-libr3d`: the 16x16x16 wave-matrix ops on ds_bpermute + v_dot2/v_dot4) decoded at 9.3 tok/s, first
+  token 0.22 s; greedy output equal to the CPU build for 27 of 32 tokens, parting at a near-tie (logprob -1.612 against
+  -1.597). L3 waits for a lemond from #3906 on the node with that card.
+- `--spec-tokens 0`: this radiance build refuses block-FP8 drafters, which this container carries.
+- MiniCPM5-2B IQ8R does not load on either the host build or libr3d: its `rmsnorm_had_quant_i8g` op is only in the
+  RDNA4 and Strix Halo libraries.
 
 ## Measured, 2026-11-13
 

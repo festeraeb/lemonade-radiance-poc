@@ -1,5 +1,5 @@
 //! Port of tests/test_make_adapter.py: spec validation and the generated backend files.
-use make_adapter::{register_cmake, render};
+use make_adapter::{normalize_args, plane_only, register_cmake, render, validate};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
@@ -31,7 +31,14 @@ fn shipped_specs_are_valid() {
         let p = e.unwrap().path();
         if p.extension().map_or(false, |x| x == "json") {
             let v: Value = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
-            render(&v).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+            let norm = normalize_args(&v).unwrap_or_else(|e| panic!("{}: {e:?}", p.display()));
+            let s = validate(&norm).unwrap_or_else(|e| panic!("{}: {e:?}", p.display()));
+            if plane_only(s) {
+                // backends.d only (checked by test_to_backend_definition.py): no generated C++
+                assert!(render(&v).is_err(), "{}: a plane-only spec rendered C++", p.display());
+            } else {
+                render(&v).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+            }
             n += 1;
         }
     }

@@ -1,0 +1,283 @@
+{
+  "schema_version": 1,
+  "id": "radiance",
+  "recipe": "radiance",
+  "kind": "local",
+  "metadata": {
+    "display_name": "radiance (AMD HIP inference server)",
+    "server_name": "radiance-lemonade",
+    "log_category": "Radiance",
+    "binary": "radiance-lemonade",
+    "config_section": "radiance",
+    "default_device": "gpu",
+    "slot_policy": "standard",
+    "options": [
+      {
+        "name": "radiance_device",
+        "default_value": "",
+        "type_name": "DEVICES",
+        "value_type": "string",
+        "help": "GPU this engine runs on (the value the engine's own flag takes)",
+        "group": "radiance (AMD HIP inference server)",
+        "unset_values": [
+          null
+        ]
+      }
+    ],
+    "support": [
+      {
+        "backend": "rocm",
+        "tier": "guest",
+        "format": "native",
+        "supported_os": [
+          "linux"
+        ],
+        "devices": {
+          "amd_gpu": [
+            "gfx1030",
+            "gfx1031",
+            "gfx1100",
+            "gfx1101",
+            "gfx1102",
+            "gfx1151",
+            "gfx1200",
+            "gfx1201"
+          ]
+        },
+        "device_summary": "AMD GPU, ROCm 7.2 or 10.1 runtime; gfx103x only with the cesarops/rdna2-libr3d kernel build",
+        "arch_gates": {}
+      },
+      {
+        "backend": "cpu",
+        "tier": "guest",
+        "format": "native",
+        "supported_os": [
+          "linux"
+        ],
+        "devices": {
+          "cpu": [
+            "x86_64"
+          ]
+        },
+        "device_summary": "radiance's host backend (AVX2 / AVX-512); about 1 tok/s on a 2B bf16 model, a fallback",
+        "arch_gates": {}
+      }
+    ],
+    "supported_modes": [
+      "chat"
+    ],
+    "required_checkpoints": [
+      "main"
+    ],
+    "bin_variants": [
+      "rocm",
+      "cpu"
+    ],
+    "uses_ctx_size": true,
+    "exposes_prometheus_metrics": true
+  },
+  "install": {
+    "strategy": "external_only"
+  },
+  "launch": {
+    "prepare_order": [
+      "artifacts",
+      "backend",
+      "program",
+      "ports"
+    ],
+    "backend": {
+      "fixed": "rocm"
+    },
+    "program": {
+      "source": "external_or_managed",
+      "install_policy": "always"
+    },
+    "ports": [
+      {
+        "name": "http",
+        "reject_zero": true,
+        "error": "radiance: no free port"
+      }
+    ],
+    "argv": [
+      {
+        "args": [
+          "--model",
+          {
+            "ref": "/model/checkpoint",
+            "type": "string"
+          },
+          "--name",
+          {
+            "ref": "/model/name",
+            "type": "string"
+          },
+          "--host",
+          "127.0.0.1",
+          "--port",
+          {
+            "string": {
+              "ref": "/launch/ports/http"
+            }
+          },
+          "--ctx",
+          {
+            "string": {
+              "ref": "/options/ctx_size"
+            }
+          },
+          "--spec-tokens",
+          "0"
+        ]
+      },
+      {
+        "when": {
+          "not": {
+            "eq": [
+              {
+                "ref": "/options/radiance_device"
+              },
+              ""
+            ]
+          }
+        },
+        "args": [
+          "--device",
+          {
+            "string": {
+              "ref": "/options/radiance_device"
+            }
+          }
+        ]
+      }
+    ],
+    "environment": {
+      "preset": "inherit",
+      "set": []
+    },
+    "working_directory": "inherit",
+    "output": {
+      "inherit_levels": [
+        "debug"
+      ],
+      "filter": false
+    },
+    "readiness": {
+      "port": "http",
+      "path": "/health",
+      "timeout": 900
+    },
+    "watchdog": {
+      "policy": "standard",
+      "port": "http",
+      "path": "/health"
+    }
+  },
+  "operations": [
+    {
+      "operation": "chat_completion",
+      "delivery": "buffered",
+      "model_modes": [
+        "chat"
+      ],
+      "transport": {
+        "kind": "http_json",
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "port": "http",
+        "timeout": "global",
+        "response_codec": "json.v1"
+      },
+      "request": {
+        "base": "identity",
+        "remove": [],
+        "set": {
+          "/model": {
+            "ref": "/model/name",
+            "type": "string"
+          }
+        },
+        "omit_missing": false
+      }
+    },
+    {
+      "operation": "completion",
+      "delivery": "buffered",
+      "model_modes": [
+        "chat"
+      ],
+      "transport": {
+        "kind": "http_json",
+        "method": "POST",
+        "path": "/v1/completions",
+        "port": "http",
+        "timeout": "global",
+        "response_codec": "json.v1"
+      },
+      "request": {
+        "base": "identity",
+        "remove": [],
+        "set": {
+          "/model": {
+            "ref": "/model/name",
+            "type": "string"
+          }
+        },
+        "omit_missing": false
+      }
+    },
+    {
+      "operation": "chat_completion",
+      "delivery": "streaming",
+      "model_modes": [
+        "chat"
+      ],
+      "transport": {
+        "kind": "http_sse",
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "port": "http",
+        "timeout": "global",
+        "stream_codec": "openai_sse.v1"
+      },
+      "request": {
+        "base": "identity",
+        "remove": [],
+        "set": {
+          "/model": {
+            "ref": "/model/name",
+            "type": "string"
+          }
+        },
+        "omit_missing": false
+      }
+    },
+    {
+      "operation": "completion",
+      "delivery": "streaming",
+      "model_modes": [
+        "chat"
+      ],
+      "transport": {
+        "kind": "http_sse",
+        "method": "POST",
+        "path": "/v1/completions",
+        "port": "http",
+        "timeout": "global",
+        "stream_codec": "openai_sse.v1"
+      },
+      "request": {
+        "base": "identity",
+        "remove": [],
+        "set": {
+          "/model": {
+            "ref": "/model/name",
+            "type": "string"
+          }
+        },
+        "omit_missing": false
+      }
+    }
+  ]
+}

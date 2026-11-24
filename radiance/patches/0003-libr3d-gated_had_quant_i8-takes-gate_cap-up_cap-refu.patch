@@ -1,0 +1,51 @@
+From 01d836d03d3e1f4604f4108157ef8784589ff5dd Mon Sep 17 00:00:00 2001
+From: Thom Hadfield <100659456+festeraeb@users.noreply.github.com>
+Date: Tue, 24 Nov 2026 07:51:09 -0500
+Subject: [PATCH 3/3] libr3d: gated_had_quant_i8 takes gate_cap/up_cap, refuses
+ a non-zero cap
+
+Why: since ade49d3 libref declares 8 parameters for gated_had_quant_i8 and libr3d 6, so the
+loader refuses libr3d whole next to libref (seen in rad-kbench on gfx1031; the same on gfx11).
+Revert: drop the two P_F64O entries and the launch check.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ libr3d/r3d_gated_had_quant_i8.hip | 3 +++
+ libr3d/r3d_rows.cpp               | 6 +++++-
+ 2 files changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/libr3d/r3d_gated_had_quant_i8.hip b/libr3d/r3d_gated_had_quant_i8.hip
+index 85cd4d5..af8850d 100644
+--- a/libr3d/r3d_gated_had_quant_i8.hip
++++ b/libr3d/r3d_gated_had_quant_i8.hip
+@@ -107,6 +107,9 @@ extern "C" {
+ int r3d_rad_gated_had_quant_i8(const RadArgs* a, RadStream s)
+ {
+     if (!a || a->n_t < 3) return R3D_NO(RAD_E_INVAL);
++    // No softcap here (SiTU gate_cap/up_cap): absent or 0 only.
++    if (rad_args_getf_or(a, "gate_cap", 0.0) != 0.0 || rad_args_getf_or(a, "up_cap", 0.0) != 0.0)
++        return R3D_NO(RAD_E_UNSUPPORTED);
+     const RadTensor* gate = r3d_opt(a, 0), *up = r3d_opt(a, 1), *q = r3d_opt(a, 2),
+                     *sc = r3d_opt(a, 3);
+     if (!r3d_p(gate) || !r3d_wp(q) || !r3d_wp(sc)) return R3D_NO(RAD_E_INVAL);
+diff --git a/libr3d/r3d_rows.cpp b/libr3d/r3d_rows.cpp
+index cf2c991..ffd36a2 100644
+--- a/libr3d/r3d_rows.cpp
++++ b/libr3d/r3d_rows.cpp
+@@ -206,8 +206,12 @@ static const RadOperandSpec oQsaTailStore[] = { { "k", RAD_OPD_IN, 0 },
+                                                 { "cu", RAD_OPD_IN, 0 },
+                                                 { "state", RAD_OPD_INOUT, 0 },
+                                                 { "sidx", RAD_OPD_IN, 0 } };
++/* gate_cap / up_cap: in the reference schema since ade49d3 (SiTU softcaps). This row has no
++ * softcap: it accepts the parameters so the op's schema agrees with libref, and refuses a non-zero
++ * cap at launch. */
+ static const RadParamSpec pGatedHadQuantI8[] = { P_INT("M"), P_INT("n"), P_INT("group"),
+-                                                 P_STR("dtype"), P_STRO("act"), P_INTO("mode") };
++                                                 P_STR("dtype"), P_STRO("act"), P_INTO("mode"),
++                                                 P_F64O("gate_cap"), P_F64O("up_cap") };
+ static const RadOperandSpec oGatedHadQuantI8[] = { { "a", RAD_OPD_IN, 0 },
+                                                    { "b", RAD_OPD_IN, 1 },
+                                                    { "q", RAD_OPD_OUT, 0 },
+-- 
+2.43.0
+

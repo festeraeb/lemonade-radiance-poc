@@ -1,3 +1,6 @@
+> **Proof-of-concept fork:** Lemonade running [radiance](https://codeberg.org/StillDeadcode/radiance) through a JSON
+> backend definition, including on RDNA2. Not a Lemonade release. See [POC.md](POC.md).
+
 ## 🍋 Lemonade: Refreshingly fast local AI
 
 <p align="center">

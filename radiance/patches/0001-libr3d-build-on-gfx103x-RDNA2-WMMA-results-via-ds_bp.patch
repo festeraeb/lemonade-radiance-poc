@@ -1,0 +1,309 @@
+From 3d15cf240de30f5a90aed8674b619d7646944b07 Mon Sep 17 00:00:00 2001
+From: Thom Hadfield <100659456+festeraeb@users.noreply.github.com>
+Date: Tue, 24 Nov 2026 07:22:28 -0500
+Subject: [PATCH 1/3] libr3d: build on gfx103x (RDNA2): WMMA results via
+ ds_bpermute + dot2/dot4
+
+Why: RDNA2 (gfx103x) has no wave-matrix unit; the four WMMA wrappers in r3d_common.h and the
+two in r3dh_wmma.h were the only reason 18 libr3d files did not build for gfx1031 (RX 6700 XT).
+The new header gives the same 16x16x16 results with ds_bpermute and v_dot2/v_dot4, same
+fragment layout; it is empty on every other target, so gfx11 builds are unchanged. The load
+gate and CMake pattern admit gfx103x.
+Revert: drop r3d_wmma_rdna2.h and its includes, restore the ^gfx11 pattern and the 11xxxx check.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ libr3d/CMakeLists.txt   |   2 +-
+ libr3d/r3d_common.h     |  41 +++++++++--
+ libr3d/r3d_rows.cpp     |   2 +-
+ libr3d/r3d_wmma_rdna2.h | 150 ++++++++++++++++++++++++++++++++++++++++
+ libr3d/r3dh_wmma.h      |   9 +++
+ 5 files changed, 197 insertions(+), 7 deletions(-)
+ create mode 100644 libr3d/r3d_wmma_rdna2.h
+
+diff --git a/libr3d/CMakeLists.txt b/libr3d/CMakeLists.txt
+index 1fcdc18..5b58078 100644
+--- a/libr3d/CMakeLists.txt
++++ b/libr3d/CMakeLists.txt
+@@ -25,7 +25,7 @@ endif()
+ # the instructions these kernels issue, so one code object per family serves them all. A build
+ # listing both a chip and the family gets both, and the engine prefers the chip's object
+ # (docs/PLUGIN.md §10).
+-rad_plugin_gpu_targets(R3D_GPU_TARGETS "^gfx11")
++rad_plugin_gpu_targets(R3D_GPU_TARGETS "^gfx11" "^gfx103")
+ if(NOT R3D_GPU_TARGETS)
+   message(STATUS
+     "libr3d: RDNA3 (gfx11xx) only, and this build targets ${RAD_GPU_TARGETS} -- not built")
+diff --git a/libr3d/r3d_common.h b/libr3d/r3d_common.h
+index b1c47dc..24c3a50 100644
+--- a/libr3d/r3d_common.h
++++ b/libr3d/r3d_common.h
+@@ -39,6 +39,7 @@
+ #define R3D_COMMON_H
+ 
+ #include "r3d_codecs.h"
++#include "r3d_wmma_rdna2.h"   /* gfx103x: the wave-matrix results without a matrix unit */
+ 
+ #include <hip/hip_runtime.h>
+ #include <cstdint>
+@@ -233,11 +234,29 @@ using v4int    = int      [[clang::ext_vector_type(4)]];
+ using v8int    = int      [[clang::ext_vector_type(8)]];
+ 
+ __device__ __forceinline__ v8float wmma_f16(const v16half& a, const v16half& b, const v8float& c)
+-{ return __builtin_amdgcn_wmma_f32_16x16x16_f16_w32(a, b, c); }
++{
++#if R3D_RDNA2
++    return r3d_rdna2::wmma_f16(a, b, c);
++#else
++    return __builtin_amdgcn_wmma_f32_16x16x16_f16_w32(a, b, c);
++#endif
++}
+ __device__ __forceinline__ v8float wmma_bf16(const v16short& a, const v16short& b, const v8float& c)
+-{ return __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32(a, b, c); }
++{
++#if R3D_RDNA2
++    return r3d_rdna2::wmma_bf16(a, b, c);
++#else
++    return __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32(a, b, c);
++#endif
++}
+ __device__ __forceinline__ v8int wmma_i8(const v4int& a, const v4int& b, const v8int& c)
+-{ return __builtin_amdgcn_wmma_i32_16x16x16_iu8_w32(true, a, true, b, c, 0); }
++{
++#if R3D_RDNA2
++    return r3d_rdna2::wmma_i8(a, b, c);
++#else
++    return __builtin_amdgcn_wmma_i32_16x16x16_iu8_w32(true, a, true, b, c, 0);
++#endif
++}
+ 
+ /* The half-precision-accumulate builtins. The accumulator is a 16-element vector (8 VGPRs x 2);
+  * `opsel` (a compile-time constant) selects which half holds the 8 live elements (false = the
+@@ -245,10 +264,22 @@ __device__ __forceinline__ v8int wmma_i8(const v4int& a, const v4int& b, const v
+  * that reads all 16 sees stale values in the dead half -- read only the selected half. */
+ template <bool OSEL>
+ __device__ __forceinline__ v16half wmma_f16acc(const v16half& a, const v16half& b, const v16half& c)
+-{ return __builtin_amdgcn_wmma_f16_16x16x16_f16_w32(a, b, c, OSEL); }
++{
++#if R3D_RDNA2
++    return r3d_rdna2::wmma_f16acc<OSEL>(a, b, c);
++#else
++    return __builtin_amdgcn_wmma_f16_16x16x16_f16_w32(a, b, c, OSEL);
++#endif
++}
+ template <bool OSEL>
+ __device__ __forceinline__ v16short wmma_bf16acc(const v16short& a, const v16short& b, const v16short& c)
+-{ return __builtin_amdgcn_wmma_bf16_16x16x16_bf16_w32(a, b, c, OSEL); }
++{
++#if R3D_RDNA2
++    return r3d_rdna2::wmma_bf16acc<OSEL>(a, b, c);
++#else
++    return __builtin_amdgcn_wmma_bf16_16x16x16_bf16_w32(a, b, c, OSEL);
++#endif
++}
+ 
+ /* ================================================================== the geometry constants
+  *
+diff --git a/libr3d/r3d_rows.cpp b/libr3d/r3d_rows.cpp
+index 645c94c..cf2c991 100644
+--- a/libr3d/r3d_rows.cpp
++++ b/libr3d/r3d_rows.cpp
+@@ -3272,7 +3272,7 @@ extern "C" int rad_plugin_open(void) {
+         char key[64];
+         unsigned long long v = 0;
+         while (std::fscanf(f, "%63s %llu", key, &v) == 2)
+-            if (!std::strcmp(key, "gfx_target_version") && v >= 110000ull && v < 120000ull)
++            if (!std::strcmp(key, "gfx_target_version") && ((v >= 110000ull && v < 120000ull) || (v >= 100300ull && v < 100400ull)))
+                 gfx11 = true;
+         std::fclose(f);
+     }
+diff --git a/libr3d/r3d_wmma_rdna2.h b/libr3d/r3d_wmma_rdna2.h
+new file mode 100644
+index 0000000..843ba0c
+--- /dev/null
++++ b/libr3d/r3d_wmma_rdna2.h
+@@ -0,0 +1,150 @@
++/* r3d_wmma_rdna2.h -- the gfx11 16x16x16 wave-matrix results on RDNA2 (gfx103x), which has no
++ * matrix unit.
++ *
++ * Same fragment layout as the gfx11 w32 builtins: lane l holds A row (l & 15) and B column
++ * (l & 15), all 16 k, in both half-waves; accumulator element e of lane l is D row 2e + (l >> 4),
++ * column l & 15 (for the 16-wide half-precision accumulators, element 2e + OSEL).
++ *
++ * Each lane pulls the 8 A rows it needs from the lanes holding them (ds_bpermute) and forms the
++ * products with the dot instructions gfx103x has: v_dot2_f32_f16 for f16, v_dot4_i32_i8 for int8,
++ * and f32 multiply-add on bf16 widened to f32. Products are exact in f32 as on gfx11; only the
++ * summation order differs. Every lane of the wave must call these together (ds_bpermute reads
++ * other lanes), as the gfx11 builtins also require.
++ *
++ * Cost per call and lane: 64 ds_bpermute and 64 dot2 (f16, bf16 is 128 FMA), 32 of each for int8.
++ * Correct, not fast: kernels that matter on RDNA2 should prefer the dot2 rows.
++ */
++#ifndef R3D_WMMA_RDNA2_H
++#define R3D_WMMA_RDNA2_H
++
++#if defined(__HIP_DEVICE_COMPILE__) &&                                                          \
++    (defined(__gfx1030__) || defined(__gfx1031__) || defined(__gfx1032__) ||                   \
++     defined(__gfx1033__) || defined(__gfx1034__) || defined(__gfx1035__) ||                   \
++     defined(__gfx1036__))
++#define R3D_RDNA2 1
++#else
++#define R3D_RDNA2 0
++#endif
++
++#if R3D_RDNA2
++#include <hip/hip_runtime.h>
++#include <cstdint>
++
++namespace r3d_rdna2 {
++
++typedef _Float16 h2_t __attribute__((ext_vector_type(2)));
++
++__device__ __forceinline__ int lane_id() { return (int)__builtin_amdgcn_mbcnt_lo(~0u, 0u); }
++__device__ __forceinline__ int pull(int v, int src_lane) {
++    return __builtin_amdgcn_ds_bpermute(src_lane << 2, v);
++}
++__device__ __forceinline__ float bf16_lo(uint32_t w) { return __uint_as_float(w << 16); }
++__device__ __forceinline__ float bf16_hi(uint32_t w) { return __uint_as_float(w & 0xffff0000u); }
++__device__ __forceinline__ uint16_t f32_to_bf16_rne(float f) {
++    uint32_t u = __float_as_uint(f);
++    if ((u & 0x7fffffffu) > 0x7f800000u) return (uint16_t)((u >> 16) | 0x40u);   /* quiet NaN */
++    u += 0x7fffu + ((u >> 16) & 1u);
++    return (uint16_t)(u >> 16);
++}
++
++/* dot of A row `row` (pulled from lane `row`) with this lane's B column, k = 0..15. */
++__device__ __forceinline__ float dot_f16(const int (&aw)[8], const int (&bw)[8], int row, float acc) {
++#pragma unroll
++    for (int j = 0; j < 8; ++j) {
++        const int w = pull(aw[j], row);
++        h2_t ah, bh;
++        __builtin_memcpy(&ah, &w, 4);
++        __builtin_memcpy(&bh, &bw[j], 4);
++        acc = __builtin_amdgcn_fdot2(ah, bh, acc, false);
++    }
++    return acc;
++}
++__device__ __forceinline__ float dot_bf16(const int (&aw)[8], const int (&bw)[8], int row, float acc) {
++#pragma unroll
++    for (int j = 0; j < 8; ++j) {
++        const uint32_t a = (uint32_t)pull(aw[j], row), b = (uint32_t)bw[j];
++        acc = __builtin_fmaf(bf16_lo(a), bf16_lo(b), acc);
++        acc = __builtin_fmaf(bf16_hi(a), bf16_hi(b), acc);
++    }
++    return acc;
++}
++
++/* f16 x f16 -> f32 (wmma_f32_16x16x16_f16_w32). A, B: any 32-byte 16 x 16-bit vector. */
++template <typename V16, typename V8F>
++__device__ __forceinline__ V8F wmma_f16(const V16& a, const V16& b, V8F c) {
++    int aw[8], bw[8];
++    __builtin_memcpy(aw, &a, 32);
++    __builtin_memcpy(bw, &b, 32);
++    const int hi = lane_id() >> 4;
++#pragma unroll
++    for (int e = 0; e < 8; ++e) c[e] = dot_f16(aw, bw, 2 * e + hi, c[e]);
++    return c;
++}
++/* bf16 x bf16 -> f32 (wmma_f32_16x16x16_bf16_w32). */
++template <typename V16, typename V8F>
++__device__ __forceinline__ V8F wmma_bf16(const V16& a, const V16& b, V8F c) {
++    int aw[8], bw[8];
++    __builtin_memcpy(aw, &a, 32);
++    __builtin_memcpy(bw, &b, 32);
++    const int hi = lane_id() >> 4;
++#pragma unroll
++    for (int e = 0; e < 8; ++e) c[e] = dot_bf16(aw, bw, 2 * e + hi, c[e]);
++    return c;
++}
++/* signed int8 x signed int8 -> int32 (wmma_i32_16x16x16_iu8_w32 with both signed, no clamp). */
++template <typename V4I, typename V8I>
++__device__ __forceinline__ V8I wmma_i8(const V4I& a, const V4I& b, V8I c) {
++    int aw[4], bw[4];
++    __builtin_memcpy(aw, &a, 16);
++    __builtin_memcpy(bw, &b, 16);
++    const int hi = lane_id() >> 4;
++#pragma unroll
++    for (int e = 0; e < 8; ++e) {
++        int acc = c[e];
++        const int row = 2 * e + hi;
++#pragma unroll
++        for (int j = 0; j < 4; ++j) acc = __builtin_amdgcn_sdot4(pull(aw[j], row), bw[j], acc, false);
++        c[e] = acc;
++    }
++    return c;
++}
++/* f16 x f16 + f16 accumulator; only elements 2e + OSEL are written (the gfx11 opsel rule). The
++ * sum is formed in f32 and rounded to f16 once, where the hardware rounds per step. */
++template <bool OSEL, typename V16>
++__device__ __forceinline__ V16 wmma_f16acc(const V16& a, const V16& b, V16 c) {
++    int aw[8], bw[8];
++    __builtin_memcpy(aw, &a, 32);
++    __builtin_memcpy(bw, &b, 32);
++    _Float16 cv[16];
++    __builtin_memcpy(cv, &c, 32);
++    const int hi = lane_id() >> 4;
++#pragma unroll
++    for (int e = 0; e < 8; ++e) {
++        const int idx = 2 * e + (OSEL ? 1 : 0);
++        cv[idx] = (_Float16)dot_f16(aw, bw, 2 * e + hi, (float)cv[idx]);
++    }
++    __builtin_memcpy(&c, cv, 32);
++    return c;
++}
++/* bf16 x bf16 + bf16 accumulator (opsel as above); f32 sum, rounded to bf16 (nearest even). */
++template <bool OSEL, typename V16>
++__device__ __forceinline__ V16 wmma_bf16acc(const V16& a, const V16& b, V16 c) {
++    int aw[8], bw[8];
++    __builtin_memcpy(aw, &a, 32);
++    __builtin_memcpy(bw, &b, 32);
++    uint16_t cv[16];
++    __builtin_memcpy(cv, &c, 32);
++    const int hi = lane_id() >> 4;
++#pragma unroll
++    for (int e = 0; e < 8; ++e) {
++        const int idx = 2 * e + (OSEL ? 1 : 0);
++        const float s = dot_bf16(aw, bw, 2 * e + hi, __uint_as_float((uint32_t)cv[idx] << 16));
++        cv[idx] = f32_to_bf16_rne(s);
++    }
++    __builtin_memcpy(&c, cv, 32);
++    return c;
++}
++
++}  // namespace r3d_rdna2
++#endif  // R3D_RDNA2
++#endif  // R3D_WMMA_RDNA2_H
+diff --git a/libr3d/r3dh_wmma.h b/libr3d/r3dh_wmma.h
+index 796fe8c..a4d0b6f 100644
+--- a/libr3d/r3dh_wmma.h
++++ b/libr3d/r3dh_wmma.h
+@@ -36,6 +36,7 @@
+ #include <hip/hip_runtime.h>
+ #include <cstdint>
+ #include "r3dh_common.h"
++#include "r3d_wmma_rdna2.h"
+ 
+ /* Byte order of stored fp8 weights along k, inside each group of four, and which
+  * e4m3 -> bf16 unpack deq16_e4m3 below compiles. In the vLLM libhalo these lived
+@@ -67,10 +68,18 @@ __device__ __forceinline__ int half(int lane) { return lane >> 4; }
+ 
+ // ---- the instruction ----------------------------------------------------------
+ __device__ __forceinline__ v8f mma(v16bf a, v16bf b, v8f c) {
++#if R3D_RDNA2
++    return r3d_rdna2::wmma_bf16(a, b, c);
++#else
+     return __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32(a, b, c);
++#endif
+ }
+ __device__ __forceinline__ v8f mma(v16hf a, v16hf b, v8f c) {
++#if R3D_RDNA2
++    return r3d_rdna2::wmma_f16(a, b, c);
++#else
+     return __builtin_amdgcn_wmma_f32_16x16x16_f16_w32(a, b, c);
++#endif
+ }
+ 
+ // ---- building a fragment ------------------------------------------------------
+-- 
+2.43.0
+

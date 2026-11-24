@@ -1,0 +1,88 @@
+From a6712043a8337c02815ebf1ad3f731f054e5f67a Mon Sep 17 00:00:00 2001
+From: Thom Hadfield <100659456+festeraeb@users.noreply.github.com>
+Date: Tue, 24 Nov 2026 07:34:22 -0500
+Subject: [PATCH 2/3] libr3d gfx103x: gfx10 asm spellings for the 16-bit scale
+ loads
+
+Why: gfx10 spells the 16-bit global load global_load_ushort and has no true16 operand (v20.l);
+three kernels inline-asm their scale loads. Macros keep the gfx11 text on gfx11.
+Revert: replace R3D_GLOBAL_LOAD_U16 / R3D_V20_LO with the literal gfx11 strings.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ libr3d/r3d_gemm_i8a8.hip        |  2 +-
+ libr3d/r3d_gemm_inta8_wmma.hip  |  4 ++--
+ libr3d/r3d_gemm_w8a8_nt_m64.hip |  4 ++--
+ libr3d/r3d_wmma_rdna2.h         | 11 +++++++++++
+ 4 files changed, 16 insertions(+), 5 deletions(-)
+
+diff --git a/libr3d/r3d_gemm_i8a8.hip b/libr3d/r3d_gemm_i8a8.hip
+index 8c06c9f..dc98d6a 100644
+--- a/libr3d/r3d_gemm_i8a8.hip
++++ b/libr3d/r3d_gemm_i8a8.hip
+@@ -141,7 +141,7 @@ __global__ __launch_bounds__(kBlockThreads) R3D_WAVES(8) void gemm_i8a8_wmma_ker
+             {
+                 const uint64_t ga = (uint64_t)(sb + (size_t)n_real * sb_rb + g);
+                 asm volatile(
+-                    "global_load_u16 v20, %[ga], off\n\t"
++                    R3D_GLOBAL_LOAD_U16 " v20, %[ga], off\n\t"
+                     "s_waitcnt vmcnt(0)\n\t"
+                     "v_lshlrev_b32_e32 v20, 16, v20\n\t"
+                     "v_mul_f32_e32 v21, %[t0], v20\n\t"
+diff --git a/libr3d/r3d_gemm_inta8_wmma.hip b/libr3d/r3d_gemm_inta8_wmma.hip
+index fd9acdb..20bf5f2 100644
+--- a/libr3d/r3d_gemm_inta8_wmma.hip
++++ b/libr3d/r3d_gemm_inta8_wmma.hip
+@@ -149,9 +149,9 @@ __global__ __launch_bounds__(kBlockThreads) R3D_WAVES(8) void gemm_w8a8_wmma_ker
+         {
+             const uint64_t ga = (uint64_t)(sb + (size_t)n_real * sb_rb + g);
+             asm volatile(
+-                "global_load_u16 v20, %[ga], off\n\t"
++                R3D_GLOBAL_LOAD_U16 " v20, %[ga], off\n\t"
+                 "s_waitcnt vmcnt(0)\n\t"
+-                "v_cvt_f32_f16_e32 v20, v20.l\n\t"
++                "v_cvt_f32_f16_e32 v20, " R3D_V20_LO "\n\t"
+                 "v_fmac_f32_e32 %[a0], %[t0], v20\n\t"
+                 "v_fmac_f32_e32 %[a1], %[t1], v20\n\t"
+                 "v_fmac_f32_e32 %[a2], %[t2], v20\n\t"
+diff --git a/libr3d/r3d_gemm_w8a8_nt_m64.hip b/libr3d/r3d_gemm_w8a8_nt_m64.hip
+index 2812e23..ec9873b 100644
+--- a/libr3d/r3d_gemm_w8a8_nt_m64.hip
++++ b/libr3d/r3d_gemm_w8a8_nt_m64.hip
+@@ -144,9 +144,9 @@ __global__ __launch_bounds__(kBlockThreads) R3D_WAVES(8) void gemm_w8a8_wmma_m64
+             {
+                 const uint64_t ga = (uint64_t)(sb + (size_t)n_real * sb_rb + g);
+                 asm volatile(
+-                    "global_load_u16 v20, %[ga], off\n\t"
++                    R3D_GLOBAL_LOAD_U16 " v20, %[ga], off\n\t"
+                     "s_waitcnt vmcnt(0)\n\t"
+-                    "v_cvt_f32_f16_e32 v20, v20.l\n\t"
++                    "v_cvt_f32_f16_e32 v20, " R3D_V20_LO "\n\t"
+                     "v_fmac_f32_e32 %[a0], %[t0], v20\n\t"
+                     "v_fmac_f32_e32 %[a1], %[t1], v20\n\t"
+                     "v_fmac_f32_e32 %[a2], %[t2], v20\n\t"
+diff --git a/libr3d/r3d_wmma_rdna2.h b/libr3d/r3d_wmma_rdna2.h
+index 843ba0c..5b564bd 100644
+--- a/libr3d/r3d_wmma_rdna2.h
++++ b/libr3d/r3d_wmma_rdna2.h
+@@ -26,6 +26,17 @@
+ #define R3D_RDNA2 0
+ #endif
+ 
++/* Inline-asm spellings that differ between gfx11 and gfx103x: the 16-bit global load is
++ * global_load_u16 on gfx11 and global_load_ushort on gfx10; a 16-bit source is the low half
++ * register (v20.l) on gfx11 (true16) and the whole register on gfx10. */
++#if R3D_RDNA2
++#define R3D_GLOBAL_LOAD_U16 "global_load_ushort"
++#define R3D_V20_LO "v20"
++#else
++#define R3D_GLOBAL_LOAD_U16 "global_load_u16"
++#define R3D_V20_LO "v20.l"
++#endif
++
+ #if R3D_RDNA2
+ #include <hip/hip_runtime.h>
+ #include <cstdint>
+-- 
+2.43.0
+
